@@ -55,13 +55,4 @@ class Issue(BaseModel):
     code: str
     message: str
     severity: str = "error"  # "error" | "warning"
-
-
-class ExtractionResult(BaseModel):
-    invoice: Invoice
-    issues: list[Issue] = Field(default_factory=list)
-    confidence: float = 0.0
-    model: str
-    escalated: bool = False
-    cost_usd: float = 0.0
-    latency_ms: int = 0
+    field: Optional[str] = None  # which Invoice field this issue is about, if any

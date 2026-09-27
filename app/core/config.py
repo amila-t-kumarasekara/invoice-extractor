@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     cheap_model: str = "gemini-2.5-flash"
     strong_model: str = "gemini-2.5-pro"
 
-    # USD per 1M tokens, ≤200k-token prompt tier - see ai.google.dev/gemini-api/docs/pricing
+    # USD per 1M tokens, <=200k-token prompt tier - see ai.google.dev/gemini-api/docs/pricing
     cheap_model_price_in: float = 0.30
     cheap_model_price_out: float = 2.50
     strong_model_price_in: float = 1.25
@@ -22,9 +22,15 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.75
     max_job_attempts: int = 5
     job_backoff_base_seconds: int = 10
+    stale_lock_minutes: int = 10  # a job locked longer than this is assumed crashed and reclaimable
     ocr_text_layer_min_chars: int = 20
 
     storage_dir: str = "./storage"
+
+    # Phase 2: upload safety
+    max_upload_bytes: int = 15 * 1024 * 1024  # 15 MB
+    max_pages: int = 25
+    allowed_mime_types: tuple[str, ...] = ("application/pdf", "image/png", "image/jpeg")
 
     @property
     def storage_path(self) -> Path:

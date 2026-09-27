@@ -1,0 +1,10 @@
+{
+  "supplier": "Initech LLC",
+  "invoice_number": "INV-3003",
+  "invoice_date": "2026-02-10",
+  "due_date": "2026-03-10",
+  "currency": "USD",
+  "subtotal": 1500.0,
+  "tax": 120.0,
+  "total": 1620.0
+}

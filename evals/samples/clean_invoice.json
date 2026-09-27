@@ -1,0 +1,10 @@
+{
+  "supplier": "Acme Co",
+  "invoice_number": "INV-1001",
+  "invoice_date": "2026-01-15",
+  "due_date": "2026-02-14",
+  "currency": "USD",
+  "subtotal": 250.0,
+  "tax": 20.0,
+  "total": 270.0
+}

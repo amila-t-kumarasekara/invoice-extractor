@@ -1,0 +1,10 @@
+{
+  "supplier": "Thames Print Co",
+  "invoice_number": "INV-5005",
+  "invoice_date": "2026-01-20",
+  "due_date": "2026-02-19",
+  "currency": "GBP",
+  "subtotal": 100.0,
+  "tax": 20.0,
+  "total": 120.0
+}

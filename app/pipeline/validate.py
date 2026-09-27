@@ -34,7 +34,12 @@ def validate_invoice(invoice: Invoice) -> list[Issue]:
     for field_name in REQUIRED_FIELDS:
         if getattr(invoice, field_name) in (None, ""):
             issues.append(
-                Issue(code="missing_required_field", message=f"Required field '{field_name}' is missing", severity="error")
+                Issue(
+                    code="missing_required_field",
+                    message=f"Required field '{field_name}' is missing",
+                    severity="error",
+                    field=field_name,
+                )
             )
 
     if invoice.line_items:
@@ -46,6 +51,7 @@ def validate_invoice(invoice: Invoice) -> list[Issue]:
                     Issue(
                         code="line_items_subtotal_mismatch",
                         message=f"Line items sum to {line_sum:.2f} but subtotal is {invoice.subtotal:.2f}",
+                        field="subtotal",
                     )
                 )
 
@@ -57,6 +63,7 @@ def validate_invoice(invoice: Invoice) -> list[Issue]:
                     code="total_mismatch",
                     message=f"subtotal ({invoice.subtotal:.2f}) + tax ({invoice.tax:.2f}) "
                     f"= {expected_total:.2f} but total is {invoice.total:.2f}",
+                    field="total",
                 )
             )
 
@@ -66,6 +73,7 @@ def validate_invoice(invoice: Invoice) -> list[Issue]:
                 Issue(
                     code="due_date_before_invoice_date",
                     message=f"Due date {invoice.due_date} is before invoice date {invoice.invoice_date}",
+                    field="due_date",
                 )
             )
 
@@ -75,6 +83,7 @@ def validate_invoice(invoice: Invoice) -> list[Issue]:
                 code="invalid_currency",
                 message=f"'{invoice.currency}' is not a recognized ISO 4217 currency code",
                 severity="warning",
+                field="currency",
             )
         )
 

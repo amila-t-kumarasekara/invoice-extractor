@@ -1,0 +1,10 @@
+{
+  "supplier": "Globex Manufacturing",
+  "invoice_number": "INV-2002",
+  "invoice_date": "2026-03-01",
+  "due_date": "2026-03-31",
+  "currency": "USD",
+  "subtotal": 330.0,
+  "tax": 26.4,
+  "total": 356.4
+}

@@ -1,0 +1,10 @@
+{
+  "supplier": "Northwind Traders",
+  "invoice_number": "INV-6006",
+  "invoice_date": "2026-04-05",
+  "due_date": "2026-05-05",
+  "currency": "USD",
+  "subtotal": 60.0,
+  "tax": 4.8,
+  "total": 64.8
+}

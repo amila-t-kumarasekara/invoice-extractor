@@ -2,8 +2,9 @@
 
 The cheap model runs first and fills the `Invoice` schema via forced tool-use
 (so we always get well-formed JSON back, not prose to parse). On escalation
-(app/pipeline/review.py) the strong model gets the same document plus the list
-of validation issues the cheap model's answer failed, and is asked to fix them.
+(app/pipeline/orchestrator.py's ValidateStage) the strong model gets the same
+document plus the list of validation issues the cheap model's answer failed,
+and is asked to fix them.
 
 We tell the model explicitly to use null instead of guessing - that's the
 single biggest lever against hallucinated totals/dates on messy invoices.
@@ -81,6 +82,8 @@ class ExtractionCall:
     cost_usd: float
     latency_ms: int
     raw: dict
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 def safe_build_invoice(raw: dict) -> tuple[Invoice, list[Issue]]:
@@ -116,6 +119,7 @@ def safe_build_invoice(raw: dict) -> tuple[Invoice, list[Issue]]:
                             code="unparseable_field",
                             message=f"Field '{top_field}' had an invalid value and was dropped: {raw.get(top_field)!r}",
                             severity="warning",
+                            field=top_field,
                         )
                     )
                     cleaned[top_field] = [] if top_field == "line_items" else None
@@ -161,9 +165,9 @@ def extract_invoice(
     raw = call_step.arguments
 
     usage = interaction.usage
-    cost_usd = ((usage.total_input_tokens or 0) / 1_000_000) * price_in_per_million + (
-        (usage.total_output_tokens or 0) / 1_000_000
-    ) * price_out_per_million
+    input_tokens = usage.total_input_tokens or 0
+    output_tokens = usage.total_output_tokens or 0
+    cost_usd = (input_tokens / 1_000_000) * price_in_per_million + (output_tokens / 1_000_000) * price_out_per_million
 
     invoice, pre_issues = safe_build_invoice(raw)
 
@@ -174,4 +178,6 @@ def extract_invoice(
         cost_usd=cost_usd,
         latency_ms=latency_ms,
         raw=raw,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )

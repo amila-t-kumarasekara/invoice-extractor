@@ -1,0 +1,10 @@
+{
+  "supplier": "Barrow & Sons Ltd",
+  "invoice_number": "INV-4004",
+  "invoice_date": "2026-04-03",
+  "due_date": "2026-05-03",
+  "currency": "GBP",
+  "subtotal": 200.0,
+  "tax": 40.0,
+  "total": 240.0
+}
