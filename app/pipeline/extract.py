@@ -1,10 +1,18 @@
-"""LLM-based structured extraction.
+"""Doctype-generic, grounded LLM extraction.
 
-The cheap model runs first and fills the `Invoice` schema via forced tool-use
-(so we always get well-formed JSON back, not prose to parse). On escalation
-(app/pipeline/orchestrator.py's ValidateStage) the strong model gets the same
-document plus the list of validation issues the cheap model's answer failed,
-and is asked to fix them.
+The cheap model runs first and fills the doctype's Pydantic schema via forced
+tool-use (so we always get well-formed JSON back, not prose to parse). On
+escalation (app/pipeline/orchestrator.py's ValidateStage) the strong model
+gets the same document plus the list of validation issues the cheap model's
+answer failed, and is asked to fix them.
+
+Grounding (Phase 6): every top-level scalar field comes back wrapped as
+`{value, page_no, source_text}` instead of a bare value (see
+app/doctypes/invoice/tool_schema.py). `unwrap_grounded_raw` splits that into a
+plain value dict (fed to `safe_build_invoice`, unchanged from before) and a
+dict of grounding *hints* - the actual bbox resolution against real page word
+boxes happens in app/pipeline/grounding.py, called from the orchestrator where
+the parsed page data lives.
 
 We tell the model explicitly to use null instead of guessing - that's the
 single biggest lever against hallucinated totals/dates on messy invoices.
@@ -12,72 +20,20 @@ single biggest lever against hallucinated totals/dates on messy invoices.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from google import genai
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from app.models import Invoice, Issue
-
-SYSTEM_PROMPT = """You extract structured data from invoice text (which may include OCR errors).
-Only report a value if it is actually present in the text. If a field is missing, ambiguous, or
-you are not confident, set it to null - never guess or infer a value that is not written down,
-except for currency, which may be inferred from context (e.g. "$" -> USD, a UK address -> GBP)
-only when reasonably unambiguous. Dates must be normalized to YYYY-MM-DD. Numbers must be plain
-numbers with no currency symbols or thousands separators."""
-
-INVOICE_TOOL_NAME = "record_invoice"
-
-# Gemini's function-calling schema is OpenAPI-style (nullable: true), not JSON
-# Schema's `type: [string, null]` union form.
-INVOICE_TOOL = {
-    "type": "function",
-    "name": INVOICE_TOOL_NAME,
-    "description": "Record the structured invoice fields extracted from the document text.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "supplier": {"type": "string", "nullable": True},
-            "invoice_number": {"type": "string", "nullable": True},
-            "invoice_date": {"type": "string", "nullable": True, "description": "YYYY-MM-DD or null"},
-            "due_date": {"type": "string", "nullable": True, "description": "YYYY-MM-DD or null"},
-            "currency": {"type": "string", "nullable": True, "description": "ISO 4217 code, e.g. USD, EUR, GBP"},
-            "subtotal": {"type": "number", "nullable": True},
-            "tax": {"type": "number", "nullable": True},
-            "total": {"type": "number", "nullable": True},
-            "line_items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "description": {"type": "string", "nullable": True},
-                        "quantity": {"type": "number", "nullable": True},
-                        "unit_price": {"type": "number", "nullable": True},
-                        "amount": {"type": "number", "nullable": True},
-                    },
-                    "required": ["description", "quantity", "unit_price", "amount"],
-                },
-            },
-        },
-        "required": [
-            "supplier",
-            "invoice_number",
-            "invoice_date",
-            "due_date",
-            "currency",
-            "subtotal",
-            "tax",
-            "total",
-            "line_items",
-        ],
-    },
-}
+from app.doctypes.registry import DocTypeConfig
+from app.models import Issue
 
 
 @dataclass
 class ExtractionCall:
-    invoice: Invoice
+    record: BaseModel  # the doctype's schema instance (e.g. Invoice)
     pre_issues: list[Issue]  # issues raised while coercing the raw LLM output itself
+    grounding_hints: dict[str, dict]  # field -> {"page_no": int|None, "source_text": str|None}
     model: str
     cost_usd: float
     latency_ms: int
@@ -86,9 +42,29 @@ class ExtractionCall:
     output_tokens: int = 0
 
 
-def safe_build_invoice(raw: dict) -> tuple[Invoice, list[Issue]]:
-    """Build an Invoice from raw LLM JSON, degrading field-by-field instead of
-    failing the whole extraction if one field (usually a date) is malformed.
+def unwrap_grounded_raw(raw: dict, grounded_fields: tuple[str, ...]) -> tuple[dict, dict[str, dict]]:
+    """Split `{field: {value, page_no, source_text}}` into a plain value dict
+    and a grounding-hints dict. Defensive against a field not following the
+    wrapper shape (degrades to null rather than crashing)."""
+    plain: dict = {}
+    grounding_hints: dict[str, dict] = {}
+    for key, val in raw.items():
+        if key in grounded_fields:
+            if isinstance(val, dict) and "value" in val:
+                plain[key] = val.get("value")
+                grounding_hints[key] = {"page_no": val.get("page_no"), "source_text": val.get("source_text")}
+            else:
+                plain[key] = None
+                grounding_hints[key] = {"page_no": None, "source_text": None}
+        else:
+            plain[key] = val
+    return plain, grounding_hints
+
+
+def safe_build_invoice(schema_cls: type[BaseModel], raw: dict) -> tuple[BaseModel, list[Issue]]:
+    """Build a schema instance from raw (unwrapped) LLM JSON, degrading
+    field-by-field instead of failing the whole extraction if one field
+    (usually a date) is malformed.
 
     Uses pydantic's error locations to null out exactly the field(s) that
     failed to validate, re-checking until the payload validates or we run out
@@ -99,7 +75,7 @@ def safe_build_invoice(raw: dict) -> tuple[Invoice, list[Issue]]:
 
     for _ in range(len(cleaned) + 1):
         try:
-            return Invoice.model_validate(cleaned), issues
+            return schema_cls.model_validate(cleaned), issues
         except ValidationError as exc:
             progressed = False
             for err in exc.errors():
@@ -127,19 +103,20 @@ def safe_build_invoice(raw: dict) -> tuple[Invoice, list[Issue]]:
             if not progressed:
                 raise
 
-    raise RuntimeError("safe_build_invoice: failed to converge on a valid Invoice")
+    raise RuntimeError("safe_build_invoice: failed to converge on a valid schema instance")
 
 
-def extract_invoice(
+def extract_document(
     client: genai.Client,
     *,
+    doctype: DocTypeConfig,
     model: str,
     document_text: str,
     price_in_per_million: float,
     price_out_per_million: float,
     prior_issues: list[str] | None = None,
 ) -> ExtractionCall:
-    user_content = f"Invoice document text:\n\n{document_text}"
+    user_content = f"Document text:\n\n{document_text}"
     if prior_issues:
         issues_block = "\n".join(f"- {i}" for i in prior_issues)
         user_content += (
@@ -152,11 +129,11 @@ def extract_invoice(
     start = time.monotonic()
     interaction = client.interactions.create(
         model=model,
-        system_instruction=SYSTEM_PROMPT,
+        system_instruction=doctype.system_prompt,
         input=user_content,
-        tools=[INVOICE_TOOL],
+        tools=[doctype.tool_schema],
         generation_config={
-            "tool_choice": {"allowed_tools": {"mode": "any", "tools": [INVOICE_TOOL_NAME]}},
+            "tool_choice": {"allowed_tools": {"mode": "any", "tools": [doctype.tool_name]}},
         },
     )
     latency_ms = int((time.monotonic() - start) * 1000)
@@ -169,11 +146,13 @@ def extract_invoice(
     output_tokens = usage.total_output_tokens or 0
     cost_usd = (input_tokens / 1_000_000) * price_in_per_million + (output_tokens / 1_000_000) * price_out_per_million
 
-    invoice, pre_issues = safe_build_invoice(raw)
+    plain_raw, grounding_hints = unwrap_grounded_raw(raw, doctype.grounded_fields)
+    record, pre_issues = safe_build_invoice(doctype.schema, plain_raw)
 
     return ExtractionCall(
-        invoice=invoice,
+        record=record,
         pre_issues=pre_issues,
+        grounding_hints=grounding_hints,
         model=model,
         cost_usd=cost_usd,
         latency_ms=latency_ms,

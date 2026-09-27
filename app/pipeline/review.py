@@ -1,38 +1,86 @@
-"""Confidence scoring.
+"""Per-field confidence gate (NEW_PLAN.md Phase 9).
 
-The escalation loop itself (cheap model -> validate -> strong model on error)
-now lives in `app/pipeline/orchestrator.py`'s ExtractStage/ValidateStage, since
-each attempt needs to be persisted as its own `extractions` row before the
-next stage runs (that's what makes a crashed worker resumable without
-re-paying for an LLM call it already made). This module keeps only the pure
-scoring function, which stays a plain function of (invoice, issues, escalated)
-so it's trivial to unit test in isolation.
+Each field gets a score in [0, 1] combining four equally-weighted signals:
+
+- `grounded`: was the field's value actually found on the page it claimed?
+  Vacuously 1.0 if the value is null - there's nothing to ground, so nothing
+  to penalize.
+- `rules_passed`: did this specific field trigger an *error*-severity
+  validation issue (business rule or cross-check)? Warnings don't count
+  against it - an unfamiliar supplier or a duplicate invoice number might be
+  entirely legitimate.
+- `reviewer_agreed`: did the independent AI reviewer pass (app/pipeline/reviewer.py)
+  confirm the value matches its cited source text? Vacuously 1.0 if null
+  (nothing to review, or the reviewer step wasn't run).
+- `not_escalated`: 1.0 if the cheap model's answer shipped as-is, 0.0 if it
+  took a strong-model escalation to get here. Same value for every field in a
+  document - escalation is a whole-attempt decision, not a per-field one.
+
+The document's score is the *minimum* across its required fields (NEW_PLAN.md:
+"Document score is the lowest score among its required fields") - the least
+confident required field caps the whole document. Below
+`CONFIDENCE_THRESHOLD`, status becomes `needs_review` instead of `approved`.
 """
 from __future__ import annotations
 
-from app.models import ALL_FIELDS, Invoice, Issue
+from dataclasses import dataclass
 
-# Canonical set of rule categories used to compute the "checks passed" component
-# of the confidence score. Keeping this as a fixed list (rather than "however
-# many issues came back") makes the score comparable across documents.
-CHECK_CODES = (
-    "missing_required_field",
-    "line_items_subtotal_mismatch",
-    "total_mismatch",
-    "due_date_before_invoice_date",
-    "invalid_currency",
-    "unparseable_field",
-)
+from pydantic import BaseModel
+
+from app.models import Issue
 
 
-def compute_confidence(invoice: Invoice, issues: list[Issue], escalated: bool) -> float:
-    errors = {i.code for i in issues if i.severity == "error"} & set(CHECK_CODES)
-    checks_passed_ratio = 1 - (len(errors) / len(CHECK_CODES))
+@dataclass
+class FieldScore:
+    field: str
+    grounded: float
+    rules_passed: float
+    reviewer_agreed: float
+    not_escalated: float
 
-    filled = sum(1 for f in ALL_FIELDS if getattr(invoice, f) is not None)
-    fields_filled_ratio = filled / len(ALL_FIELDS)
+    @property
+    def score(self) -> float:
+        return round((self.grounded + self.rules_passed + self.reviewer_agreed + self.not_escalated) / 4, 4)
 
-    escalation_score = 0.0 if escalated else 1.0
 
-    confidence = 0.5 * checks_passed_ratio + 0.3 * fields_filled_ratio + 0.2 * escalation_score
-    return round(max(0.0, min(1.0, confidence)), 4)
+def score_field(
+    field: str,
+    value: object,
+    *,
+    grounded: bool,
+    issues: list[Issue],
+    reviewer_agrees: bool | None,
+    escalated: bool,
+) -> FieldScore:
+    grounded_score = 1.0 if value is None else (1.0 if grounded else 0.0)
+    rules_passed_score = 0.0 if any(i.field == field and i.severity == "error" for i in issues) else 1.0
+    reviewer_score = 1.0 if reviewer_agrees in (None, True) else 0.0
+    not_escalated_score = 0.0 if escalated else 1.0
+    return FieldScore(field, grounded_score, rules_passed_score, reviewer_score, not_escalated_score)
+
+
+def compute_confidence(
+    record: BaseModel,
+    *,
+    all_fields: tuple[str, ...],
+    required_fields: tuple[str, ...],
+    issues: list[Issue],
+    grounding: dict[str, dict | None],
+    reviewer_agreements: dict[str, bool | None],
+    escalated: bool,
+) -> tuple[float, dict[str, FieldScore]]:
+    """Returns (document_score, {field: FieldScore}) - scores are computed for
+    every field in `all_fields`, but the document score only aggregates
+    `required_fields`."""
+    scores: dict[str, FieldScore] = {}
+    for field in all_fields:
+        scores[field] = score_field(
+            field,
+            getattr(record, field, None),
+            grounded=grounding.get(field) is not None,
+            issues=issues,
+            reviewer_agrees=reviewer_agreements.get(field),
+            escalated=escalated,
+        )
+    document_score = min((scores[f].score for f in required_fields), default=0.0)
+    return round(document_score, 4), scores

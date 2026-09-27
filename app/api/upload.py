@@ -67,7 +67,8 @@ async def upload_document(
         filename=file.filename or f"upload.{extension}",
         mime_type=mime_type,
         storage_key=storage_key,
-        doc_type="invoice",  # Phase 5 (classify) will set this properly; everything is assumed invoice for now
+        # doc_type is left unset - app.pipeline.orchestrator.ClassifyStage is the
+        # sole authority for setting it, once the document reaches the classify stage.
         status=DocumentStatus.uploaded.value,
     )
     db.add(document)

@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #faf3e8;
+  --surface: #fffdf9;
+  --surface-raised: #ffffff;
+  --ink: #2c2015;
+  --ink-soft: #6f5f4d;
+  --ink-faint: #9c8b76;
+  --sand: #e8dac2;
+  --sand-soft: #f2e8d6;
+
+  --terracotta: #c1592e;
+  --terracotta-soft: #f4ded0;
+  --terracotta-strong: #a1451f;
+
+  --amber: #b9821b;
+  --amber-soft: #f6e9c8;
+
+  --sage: #5f7a45;
+  --sage-soft: #e4ecd8;
+
+  --brick: #ab3f30;
+  --brick-soft: #f3ddd7;
+
+  --taupe: #8c7f6c;
+  --taupe-soft: #ece3d3;
+
+  --shadow-color: 30 20% 20%;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-sand: var(--sand);
+  --color-sand-soft: var(--sand-soft);
+
+  --color-terracotta: var(--terracotta);
+  --color-terracotta-soft: var(--terracotta-soft);
+  --color-terracotta-strong: var(--terracotta-strong);
+
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+
+  --color-sage: var(--sage);
+  --color-sage-soft: var(--sage-soft);
+
+  --color-brick: var(--brick);
+  --color-brick-soft: var(--brick-soft);
+
+  --color-taupe: var(--taupe);
+  --color-taupe-soft: var(--taupe-soft);
+
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-inter);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #211a12;
+    --surface: #2a2117;
+    --surface-raised: #30271b;
+    --ink: #f3e9d8;
+    --ink-soft: #cbb99e;
+    --ink-faint: #93826b;
+    --sand: #4a3d2a;
+    --sand-soft: #382e20;
+
+    --terracotta: #e07a4c;
+    --terracotta-soft: #4a3021;
+    --terracotta-strong: #f19467;
+
+    --amber: #e0b04c;
+    --amber-soft: #43371c;
+
+    --sage: #96b878;
+    --sage-soft: #2e3a22;
+
+    --brick: #e2705d;
+    --brick-soft: #452420;
+
+    --taupe: #b2a48d;
+    --taupe-soft: #3a3122;
+  }
+}
+
+* {
+  border-color: var(--sand);
+}
+
+html {
+  background: var(--paper);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: var(--terracotta-soft);
+  color: var(--terracotta-strong);
+}
+
+/* subtle warm scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--paper);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--sand);
+  border-radius: 999px;
+  border: 2px solid var(--paper);
+}

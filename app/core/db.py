@@ -31,12 +31,15 @@ class Base(DeclarativeBase):
 
 
 class DocumentStatus(str, enum.Enum):
-    """uploaded -> parsed -> [classified] -> extracted -> validated ->
+    """uploaded -> parsed -> classified -> extracted -> validated ->
     approved | needs_review | failed | rejected
 
-    `classified` is defined now so the schema doesn't need another migration
-    when Phase 5 (classify/route) lands, but nothing sets it yet - every
-    document is currently assumed to be an invoice.
+    If an upload actually contained more than one document type
+    (page-splitting, see ClassifyStage), the primary document just continues
+    through this same state machine for its own page group - there's no
+    separate "split" status. Its relationship to the documents split out of it
+    is discoverable via `Document.split_from_document_id` on the children (and
+    `GET /documents/{id}` echoes `child_document_ids` on the parent).
     """
 
     uploaded = "uploaded"
@@ -52,6 +55,7 @@ class DocumentStatus(str, enum.Enum):
 
 class JobStage(str, enum.Enum):
     parse = "parse"
+    classify = "classify"
     extract = "extract"
     validate = "validate"
 
@@ -73,9 +77,15 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String, nullable=False)
     mime_type: Mapped[str] = mapped_column(String, nullable=False, default="application/pdf")
     storage_key: Mapped[str] = mapped_column(String, nullable=False)
-    doc_type: Mapped[str] = mapped_column(String, nullable=False, default="invoice")
+    doc_type: Mapped[str | None] = mapped_column(String, nullable=True)  # set by ClassifyStage; null until classified
     status: Mapped[str] = mapped_column(String, nullable=False, default=DocumentStatus.uploaded.value)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Set on a document created by page-splitting (Phase 4) - see ClassifyStage.
+    split_from_document_id: Mapped[str | None] = mapped_column(ForeignKey("documents.id"), nullable=True)
+    # Non-null only when this document is one group of a split upload - restricts
+    # which of its own `pages` rows belong to it. Null means "all of them."
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -94,9 +104,8 @@ class Page(Base):
     page_no: Mapped[int] = mapped_column(Integer, nullable=False)
     text_source: Mapped[str] = mapped_column(String, nullable=False)  # "text_layer" | "ocr"
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    # Populated in Phase 4 (rendered page image) / Phase 6 (word boxes for grounding).
-    image_key: Mapped[str | None] = mapped_column(String, nullable=True)
-    words: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    image_key: Mapped[str | None] = mapped_column(String, nullable=True)  # rendered page PNG, for the review UI
+    words: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # [{"text": str, "bbox": [x0,y0,x1,y1]}, ...]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     document: Mapped["Document"] = relationship(back_populates="pages")
@@ -138,9 +147,12 @@ class Extraction(Base):
 
 
 class FieldValue(Base):
-    """One row per extracted field. `page_no`/`bbox`/`source_text` stay null
-    until Phase 6 (grounding) computes them; `field`/`value` are populated
-    today so per-field data is queryable even before grounding exists."""
+    """One row per extracted field. `page_no`/`bbox`/`source_text` are the
+    deterministically-grounded location (app/pipeline/grounding.py) - null if
+    the field itself is null or grounding couldn't find the model's reported
+    source_text on the page. `confidence` is the final per-field score from
+    the Phase 9 confidence gate (grounded + rules-passed + reviewer-agreed +
+    no-escalation-needed)."""
 
     __tablename__ = "field_values"
 
@@ -155,6 +167,7 @@ class FieldValue(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     extraction: Mapped["Extraction"] = relationship(back_populates="field_values")
+    corrections: Mapped[list["Correction"]] = relationship(back_populates="field_value", cascade="all, delete-orphan")
 
 
 class ValidationIssue(Base):
@@ -171,9 +184,22 @@ class ValidationIssue(Base):
     extraction: Mapped["Extraction"] = relationship(back_populates="issues")
 
 
+class Supplier(Base):
+    """Stands in for real master data (Phase 7 cross-check): a small, seeded
+    per-tenant allowlist of known supplier names. See scripts/seed_suppliers.py."""
+
+    __tablename__ = "suppliers"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_supplier_tenant_name"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_uuid)
+    tenant_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Correction(Base):
-    """Unused until Phase 10 (review UI) - table exists now so the migration
-    doesn't need to change shape later."""
+    """A human edit made via the review UI (app/api/review.py) - written when
+    a reviewer corrects a field and approves the document."""
 
     __tablename__ = "corrections"
 
@@ -183,6 +209,8 @@ class Correction(Base):
     new_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     reviewer: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    field_value: Mapped["FieldValue"] = relationship(back_populates="corrections")
 
 
 _engine = None

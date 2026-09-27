@@ -1,4 +1,5 @@
-from app.pipeline.extract import safe_build_invoice
+from app.doctypes.invoice.schema import GROUNDED_FIELDS, Invoice
+from app.pipeline.extract import safe_build_invoice, unwrap_grounded_raw
 
 
 def test_safe_build_invoice_accepts_clean_data():
@@ -13,7 +14,7 @@ def test_safe_build_invoice_accepts_clean_data():
         "total": 110.0,
         "line_items": [],
     }
-    invoice, issues = safe_build_invoice(raw)
+    invoice, issues = safe_build_invoice(Invoice, raw)
     assert invoice.supplier == "Acme Co"
     assert issues == []
 
@@ -30,7 +31,7 @@ def test_safe_build_invoice_drops_unparseable_date_instead_of_failing():
         "total": 110.0,
         "line_items": [],
     }
-    invoice, issues = safe_build_invoice(raw)
+    invoice, issues = safe_build_invoice(Invoice, raw)
     assert invoice.invoice_date is None
     assert invoice.supplier == "Acme Co"
     assert any(i.code == "unparseable_field" for i in issues)
@@ -48,7 +49,7 @@ def test_safe_build_invoice_drops_multiple_bad_fields_independently():
         "total": 110.0,
         "line_items": [],
     }
-    invoice, issues = safe_build_invoice(raw)
+    invoice, issues = safe_build_invoice(Invoice, raw)
     assert invoice.invoice_date is None
     assert invoice.due_date is None
     assert invoice.supplier == "Acme Co"
@@ -70,7 +71,30 @@ def test_safe_build_invoice_drops_bad_line_item_field_only():
             {"description": "Widget", "quantity": "a lot", "unit_price": 100.0, "amount": 100.0},
         ],
     }
-    invoice, issues = safe_build_invoice(raw)
+    invoice, issues = safe_build_invoice(Invoice, raw)
     assert invoice.line_items[0].quantity is None
     assert invoice.line_items[0].description == "Widget"
     assert invoice.line_items[0].amount == 100.0
+
+
+def test_unwrap_grounded_raw_splits_value_and_hints():
+    raw = {
+        "supplier": {"value": "Acme Co", "page_no": 1, "source_text": "Acme Co"},
+        "total": {"value": 110.0, "page_no": 1, "source_text": "Total: 110.00"},
+        "line_items": [{"description": "Widget", "quantity": 1.0, "unit_price": 100.0, "amount": 100.0}],
+    }
+    plain, hints = unwrap_grounded_raw(raw, GROUNDED_FIELDS)
+    assert plain["supplier"] == "Acme Co"
+    assert plain["total"] == 110.0
+    assert plain["line_items"] == raw["line_items"]  # ungrounded field passes through untouched
+    assert hints["supplier"] == {"page_no": 1, "source_text": "Acme Co"}
+    assert hints["total"] == {"page_no": 1, "source_text": "Total: 110.00"}
+
+
+def test_unwrap_grounded_raw_degrades_malformed_wrapper_to_null():
+    # Model didn't follow the {value, page_no, source_text} shape for a field -
+    # should degrade to null instead of raising.
+    raw = {"supplier": "Acme Co (not wrapped)"}
+    plain, hints = unwrap_grounded_raw(raw, GROUNDED_FIELDS)
+    assert plain["supplier"] is None
+    assert hints["supplier"] == {"page_no": None, "source_text": None}

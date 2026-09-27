@@ -1,7 +1,7 @@
 from datetime import date
 
-from app.models import Invoice, LineItem
-from app.pipeline.validate import validate_invoice
+from app.doctypes.invoice.schema import Invoice, LineItem
+from app.doctypes.invoice.rules import validate_invoice
 
 
 def make_invoice(**overrides) -> Invoice:
@@ -69,3 +69,10 @@ def test_missing_amounts_do_not_crash_the_sum_check():
     invoice = make_invoice(line_items=[LineItem(description="Mystery", amount=None)])
     issues = validate_invoice(invoice)
     assert not any(i.code == "line_items_subtotal_mismatch" for i in issues)
+
+
+# `cross_check_invoice` (duplicate invoice number, known-supplier lookup) needs
+# a real Postgres session with other documents' data to mean anything - unlike
+# everything else in this test file, it can't be a DB-free pure-function test.
+# It's verified live against docker compose instead (see README's Tests
+# section) rather than here.
