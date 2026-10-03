@@ -363,16 +363,6 @@ _Fill this in against real invoices - these are the interview stories._
 - **Same file uploaded twice:**
 - **A batch upload with more than one document type in it:**
 
-## Status against NEW_PLAN.md
-
-**Done**, all 11 phases: baseline/eval harness (0), foundations/migrations/
-storage interface (1), upload safety (2), staged orchestrator with crash
-recovery (3), parsing with word boxes + page images + splitting (4),
-classify/route (5), grounded extraction (6), 3-stage validation with
-cross-checks (7), AI reviewer + escalation (8), per-field confidence gate (9),
-review UI + corrections + webhook (10), and this test suite / eval / README
-pass (11).
-
 **Honest gaps, not silently glossed over:**
 
 - **MinIO isn't bundled in `docker-compose.yml`.** The code is real (`app/core/storage.py::MinioStorage`,
